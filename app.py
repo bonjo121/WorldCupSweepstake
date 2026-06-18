@@ -1,7 +1,7 @@
 import pandas as pd
 from tournament_state import tournament_state
 import streamlit as st
-from qualification import get_qualified_teams, update_tournament_state, update_knockout_stages
+from qualification import update_group_stages, update_knockout_stages
 from matches import get_finished_matches
 from standings import build_group_tables
 from datetime import datetime
@@ -28,19 +28,16 @@ for _, row in players.iterrows():
 
 # Update Live Info
 matches_df = get_finished_matches()
-
-standings_df = build_group_tables(matches_df)
+group_matches_df = matches_df[matches_df["round"] <= 3].copy()
+standings_df = build_group_tables(group_matches_df)
 
 for team in tournament_state:
     tournament_state[team]["stage"] = "Group Exit"
     tournament_state[team]["alive"] = True
 
-qualified, eliminated = get_qualified_teams(standings_df)
-
-tournament_state = update_tournament_state(
+tournament_state = update_group_stages(
     tournament_state,
-    qualified,
-    eliminated
+    standings_df
 )
 
 tournament_state = update_knockout_stages(
@@ -114,7 +111,7 @@ styled = display_df.style.map(
 )
 
 st.title("World Cup Sweepstake")
-st.caption("Data automatically updated from TheSportsDB")
+st.caption("Data automatically updated from WorldCup26 API")
 st.caption(f"Last updated: {datetime.now():%Y-%m-%d %H:%M}")
 
 st.dataframe(
@@ -122,4 +119,10 @@ st.dataframe(
     hide_index=True
 )
 
-print(build_group_tables(matches_df))
+st.markdown(
+    """
+🟩 **Still in contention**
+
+🟥 **Eliminated**
+"""
+)

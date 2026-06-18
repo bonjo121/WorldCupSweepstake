@@ -1,31 +1,96 @@
-def get_qualified_teams(standings_df):
-    qualified = set()
-    eliminated = set()
-
+def update_group_stages(tournament_state, standings_df):
     third_place_rows = []
 
     for group in standings_df["Group"].unique():
         group_table = standings_df[standings_df["Group"] == group].copy()
-
-        # Only process a group once everyone has played 3 matches
-        if group_table["Played"].min() < 3:
-            continue
 
         group_table = group_table.sort_values(
             ["Points", "GD", "GF"],
             ascending=[False, False, False]
         )
 
-        # Top 2 qualify automatically
-        qualified.update(group_table.iloc[0:2]["Team"])
+        games_played = group_table["Played"].min()
 
-        # 3rd place goes into best-third-place comparison
-        third_place_rows.append(group_table.iloc[2])
+        if games_played < 2:
+            continue
 
-        # 4th place is eliminated
-        eliminated.add(group_table.iloc[3]["Team"])
+        if games_played == 2:
+            for _, team_row in group_table.iterrows():
+                team = team_row["Team"]
+                points = team_row["Points"]
 
-    # Work out best 8 third-place teams
+                if points == 6:
+                    tournament_state[team]["stage"] = "Out of Group"
+                    tournament_state[team]["alive"] = True
+                    continue
+
+                other_teams = group_table[group_table["Team"] != team].copy()
+
+                other_teams["Max Points"] = (
+                    other_teams["Points"] + ((3 - other_teams["Played"]) * 3)
+                )
+
+                teams_that_can_catch = other_teams[
+                    other_teams["Max Points"] >= points
+                ]
+
+                if len(teams_that_can_catch) <= 1:
+                    tournament_state[team]["stage"] = "Out of Group"
+                    tournament_state[team]["alive"] = True
+
+            continue
+
+        if games_played == 3:
+            for team in group_table.iloc[0:2]["Team"]:
+                tournament_state[team]["stage"] = "Out of Group"
+                tournament_state[team]["alive"] = True
+
+            third_place_row = group_table.iloc[2]
+            third_place_rows.append(third_place_row)
+
+            fourth_place_team = group_table.iloc[3]["Team"]
+            tournament_state[fourth_place_team]["stage"] = "Group Exit"
+            tournament_state[fourth_place_team]["alive"] = False
+
+            third_place_team = third_place_row["Team"]
+            better_thirds = 0
+
+            for other_group in standings_df["Group"].unique():
+                other_table = standings_df[
+                    standings_df["Group"] == other_group
+                ].copy()
+
+                if other_table["Played"].min() < 3:
+                    continue
+
+                other_table = other_table.sort_values(
+                    ["Points", "GD", "GF"],
+                    ascending=[False, False, False]
+                )
+
+                other_third = other_table.iloc[2]
+
+                if other_third["Team"] == third_place_team:
+                    continue
+
+                if (
+                    other_third["Points"] > third_place_row["Points"]
+                    or (
+                        other_third["Points"] == third_place_row["Points"]
+                        and other_third["GD"] > third_place_row["GD"]
+                    )
+                    or (
+                        other_third["Points"] == third_place_row["Points"]
+                        and other_third["GD"] == third_place_row["GD"]
+                        and other_third["GF"] > third_place_row["GF"]
+                    )
+                ):
+                    better_thirds += 1
+
+            if better_thirds >= 8:
+                tournament_state[third_place_team]["stage"] = "Group Exit"
+                tournament_state[third_place_team]["alive"] = False
+
     if len(third_place_rows) == 12:
         third_place_df = standings_df.__class__(third_place_rows)
 
@@ -37,19 +102,13 @@ def get_qualified_teams(standings_df):
         best_thirds = third_place_df.iloc[0:8]["Team"]
         worst_thirds = third_place_df.iloc[8:12]["Team"]
 
-        qualified.update(best_thirds)
-        eliminated.update(worst_thirds)
+        for team in best_thirds:
+            tournament_state[team]["stage"] = "Out of Group"
+            tournament_state[team]["alive"] = True
 
-    return qualified, eliminated
-
-def update_tournament_state(tournament_state, qualified, eliminated):
-    for team in qualified:
-        tournament_state[team]["stage"] = "Out of Group"
-        tournament_state[team]["alive"] = True
-
-    for team in eliminated:
-        tournament_state[team]["stage"] = "Group Exit"
-        tournament_state[team]["alive"] = False
+        for team in worst_thirds:
+            tournament_state[team]["stage"] = "Group Exit"
+            tournament_state[team]["alive"] = False
 
     return tournament_state
 
@@ -80,15 +139,10 @@ def update_knockout_stages(tournament_state, matches_df):
         if home_score > away_score:
             winner = home
             loser = away
-
         elif away_score > home_score:
             winner = away
             loser = home
-
         else:
-            continue
-
-        if not tournament_state[winner]["alive"]:
             continue
 
         winner_game_number = games_played[winner]
@@ -96,12 +150,18 @@ def update_knockout_stages(tournament_state, matches_df):
         if winner_game_number < 4:
             continue
 
-        tournament_state[winner]["stage"] = (
-            knockout_stage_by_game_number[winner_game_number]
-        )
-
-        tournament_state[winner]["alive"] = True
+        # Loser of a knockout match is eliminated
         tournament_state[loser]["alive"] = False
 
-    return tournament_state
+        # If winner was already eliminated, ignore the match
+        # This protects against the third-place match
+        if not tournament_state[winner]["alive"]:
+            continue
 
+        tournament_state[winner]["stage"] = knockout_stage_by_game_number[
+            winner_game_number
+        ]
+
+        tournament_state[winner]["alive"] = True
+
+    return tournament_state

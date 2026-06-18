@@ -52,5 +52,3 @@ def get_finished_matches():
             })
 
     return pd.DataFrame(matches)
-
-print(get_finished_matches())
