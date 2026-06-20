@@ -9,11 +9,7 @@ def third_place_status(standings_df, third_place_row):
 
     for group in standings_df["Group"].unique():
         group_table = standings_df[standings_df["Group"] == group].copy()
-
-        group_table = group_table.sort_values(
-            ["Points", "GD", "GF"],
-            ascending=[False, False, False]
-        )
+        group_table = group_table.reset_index(drop=True)
 
         if group_table["Played"].min() == 3:
             other_third = group_table.iloc[2]
@@ -57,19 +53,41 @@ def third_place_status(standings_df, third_place_row):
     return "unknown"
 
 
-def update_group_stages(tournament_state, standings_df):
+def teams_have_played(team_a, team_b, matches_df):
+    match = matches_df[
+        (
+            ((matches_df["home"] == team_a) & (matches_df["away"] == team_b))
+            |
+            ((matches_df["home"] == team_b) & (matches_df["away"] == team_a))
+        )
+    ]
+
+    return not match.empty
+
+
+def get_unplayed_opponent(team, group_table, matches_df):
+    group_teams = group_table["Team"].tolist()
+
+    for other_team in group_teams:
+        if other_team == team:
+            continue
+
+        if not teams_have_played(team, other_team, matches_df):
+            return other_team
+
+    return None
+
+
+def update_group_stages(tournament_state, standings_df, matches_df):
     third_place_rows = []
 
     for group in standings_df["Group"].unique():
         group_table = standings_df[standings_df["Group"] == group].copy()
-
-        group_table = group_table.sort_values(
-            ["Points", "GD", "GF"],
-            ascending=[False, False, False]
-        )
+        group_table = group_table.reset_index(drop=True)
 
         games_played = group_table["Played"].min()
 
+        # Any team on 6 points is already through.
         for _, team_row in group_table.iterrows():
             team = team_row["Team"]
             points = team_row["Points"]
@@ -78,27 +96,58 @@ def update_group_stages(tournament_state, standings_df):
                 tournament_state[team]["stage"] = "Out of Group"
                 tournament_state[team]["alive"] = True
 
+        # Early elimination case:
+        # A team on 0 points after 2 games is out if:
+        # - their unplayed opponent has 4+ points
+        # - the other two teams both have 3+ points
+        for _, team_row in group_table.iterrows():
+            team = team_row["Team"]
+            points = team_row["Points"]
+            played = team_row["Played"]
+
+            if played == 2 and points == 0:
+                unplayed_opponent = get_unplayed_opponent(
+                    team,
+                    group_table,
+                    matches_df
+                )
+
+                if unplayed_opponent is None:
+                    continue
+
+                opponent_points = group_table.loc[
+                    group_table["Team"] == unplayed_opponent,
+                    "Points"
+                ].iloc[0]
+
+                other_teams = group_table[
+                    ~group_table["Team"].isin([team, unplayed_opponent])
+                ]
+
+                if opponent_points >= 4 and other_teams["Points"].min() >= 3:
+                    tournament_state[team]["stage"] = "Group Exit"
+                    tournament_state[team]["alive"] = False
+
         if games_played < 2:
             continue
 
-        if games_played >= 2:
-            for _, team_row in group_table.iterrows():
-                team = team_row["Team"]
-                points = team_row["Points"]
+        for _, team_row in group_table.iterrows():
+            team = team_row["Team"]
+            points = team_row["Points"]
 
-                other_teams = group_table[group_table["Team"] != team].copy()
+            other_teams = group_table[group_table["Team"] != team].copy()
 
-                other_teams["Max Points"] = (
-                    other_teams["Points"] + ((3 - other_teams["Played"]) * 3)
-                )
+            other_teams["Max Points"] = (
+                other_teams["Points"] + ((3 - other_teams["Played"]) * 3)
+            )
 
-                teams_that_can_catch = other_teams[
-                    other_teams["Max Points"] >= points
-                ]
+            teams_that_can_catch = other_teams[
+                other_teams["Max Points"] >= points
+            ]
 
-                if len(teams_that_can_catch) <= 1:
-                    tournament_state[team]["stage"] = "Out of Group"
-                    tournament_state[team]["alive"] = True
+            if len(teams_that_can_catch) <= 1:
+                tournament_state[team]["stage"] = "Out of Group"
+                tournament_state[team]["alive"] = True
 
         if games_played == 3:
             for team in group_table.iloc[0:2]["Team"]:

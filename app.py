@@ -37,7 +37,8 @@ for team in tournament_state:
 
 tournament_state = update_group_stages(
     tournament_state,
-    standings_df
+    standings_df,
+    group_matches_df
 )
 
 tournament_state = update_knockout_stages(
