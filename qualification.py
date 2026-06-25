@@ -1,68 +1,164 @@
-def third_place_status(standings_df, third_place_row):
-    team_points = third_place_row["Points"]
-    team_gd = third_place_row["GD"]
-    team_gf = third_place_row["GF"]
-    team_name = third_place_row["Team"]
+import pandas as pd
 
+from groups import groups
+from standings import build_group_tables
+
+
+SIMULATED_RESULTS = [
+    (1, 0),
+    (100, 0),
+    (0, 0),
+    (0, 1),
+    (0, 100),
+]
+
+
+def compare_teams(row_a, row_b):
+    if row_a["Points"] != row_b["Points"]:
+        return row_a["Points"] > row_b["Points"]
+
+    if row_a["GD"] != row_b["GD"]:
+        return row_a["GD"] > row_b["GD"]
+
+    if row_a["GF"] != row_b["GF"]:
+        return row_a["GF"] > row_b["GF"]
+
+    return False
+
+
+def get_played_pairs(matches_df):
+    played_pairs = set()
+
+    for _, match in matches_df.iterrows():
+        pair = frozenset([match["home"], match["away"]])
+        played_pairs.add(pair)
+
+    return played_pairs
+
+
+def get_remaining_group_matches(group_name, matches_df):
+    group_teams = groups[group_name]
+    played_pairs = get_played_pairs(matches_df)
+
+    remaining_matches = []
+
+    for i in range(len(group_teams)):
+        for j in range(i + 1, len(group_teams)):
+            team_a = group_teams[i]
+            team_b = group_teams[j]
+
+            pair = frozenset([team_a, team_b])
+
+            if pair not in played_pairs:
+                remaining_matches.append((team_a, team_b))
+
+    return remaining_matches
+
+
+def group_can_produce_better_third(
+    group_name,
+    matches_df,
+    target_third_row
+):
+    remaining_matches = get_remaining_group_matches(group_name, matches_df)
+
+    if len(remaining_matches) == 0:
+        standings_df = build_group_tables(matches_df)
+        group_table = standings_df[
+            standings_df["Group"] == group_name
+        ].reset_index(drop=True)
+
+        other_third = group_table.iloc[2]
+        return compare_teams(other_third, target_third_row)
+
+    if len(remaining_matches) != 2:
+        return True
+
+    match_1 = remaining_matches[0]
+    match_2 = remaining_matches[1]
+
+    for result_1 in SIMULATED_RESULTS:
+        for result_2 in SIMULATED_RESULTS:
+            simulated_matches = pd.DataFrame([
+                {
+                    "home": match_1[0],
+                    "away": match_1[1],
+                    "home_score": result_1[0],
+                    "away_score": result_1[1],
+                    "round": 3
+                },
+                {
+                    "home": match_2[0],
+                    "away": match_2[1],
+                    "home_score": result_2[0],
+                    "away_score": result_2[1],
+                    "round": 3
+                }
+            ])
+
+            test_matches_df = pd.concat(
+                [matches_df, simulated_matches],
+                ignore_index=True
+            )
+
+            standings_df = build_group_tables(test_matches_df)
+
+            group_table = standings_df[
+                standings_df["Group"] == group_name
+            ].reset_index(drop=True)
+
+            simulated_third = group_table.iloc[2]
+
+            if compare_teams(simulated_third, target_third_row):
+                return True
+
+    return False
+
+
+def third_place_status(standings_df, matches_df, third_place_row):
     confirmed_better = 0
     possible_better = 0
 
-    for group in standings_df["Group"].unique():
-        group_table = standings_df[standings_df["Group"] == group].copy()
-        group_table = group_table.reset_index(drop=True)
+    target_group = third_place_row["Group"]
 
-        if group_table["Played"].min() == 3:
+    for group_name in standings_df["Group"].unique():
+        if group_name == target_group:
+            continue
+
+        group_table = standings_df[
+            standings_df["Group"] == group_name
+        ].reset_index(drop=True)
+
+        group_finished = group_table["Played"].min() == 3
+
+        if group_finished:
             other_third = group_table.iloc[2]
 
-            if other_third["Team"] == team_name:
-                continue
-
-            other_is_better = (
-                other_third["Points"] > team_points
-                or (
-                    other_third["Points"] == team_points
-                    and other_third["GD"] > team_gd
-                )
-                or (
-                    other_third["Points"] == team_points
-                    and other_third["GD"] == team_gd
-                    and other_third["GF"] > team_gf
-                )
-            )
-
-            if other_is_better:
+            if compare_teams(other_third, third_place_row):
                 confirmed_better += 1
-                possible_better += 1
 
         else:
-            possible = group_table.copy()
-
-            possible["Max Points"] = (
-                possible["Points"] + ((3 - possible["Played"]) * 3)
-            )
-
-            if possible["Max Points"].max() > team_points:
+            if group_can_produce_better_third(
+                group_name,
+                matches_df,
+                third_place_row
+            ):
                 possible_better += 1
 
     if confirmed_better >= 8:
         return "eliminated"
 
-    if possible_better <= 4:
+    if confirmed_better + possible_better <= 7:
         return "qualified"
 
     return "unknown"
 
 
 def teams_have_played(team_a, team_b, matches_df):
-    match = matches_df[
-        (
-            ((matches_df["home"] == team_a) & (matches_df["away"] == team_b))
-            |
-            ((matches_df["home"] == team_b) & (matches_df["away"] == team_a))
-        )
-    ]
+    pair = frozenset([team_a, team_b])
+    played_pairs = get_played_pairs(matches_df)
 
-    return not match.empty
+    return pair in played_pairs
 
 
 def get_unplayed_opponent(team, group_table, matches_df):
@@ -81,13 +177,13 @@ def get_unplayed_opponent(team, group_table, matches_df):
 def update_group_stages(tournament_state, standings_df, matches_df):
     third_place_rows = []
 
-    for group in standings_df["Group"].unique():
-        group_table = standings_df[standings_df["Group"] == group].copy()
-        group_table = group_table.reset_index(drop=True)
+    for group_name in standings_df["Group"].unique():
+        group_table = standings_df[
+            standings_df["Group"] == group_name
+        ].reset_index(drop=True)
 
         games_played = group_table["Played"].min()
 
-        # Any team on 6 points is already through.
         for _, team_row in group_table.iterrows():
             team = team_row["Team"]
             points = team_row["Points"]
@@ -96,10 +192,6 @@ def update_group_stages(tournament_state, standings_df, matches_df):
                 tournament_state[team]["stage"] = "Out of Group"
                 tournament_state[team]["alive"] = True
 
-        # Early elimination case:
-        # A team on 0 points after 2 games is out if:
-        # - their unplayed opponent has 4+ points
-        # - the other two teams both have 3+ points
         for _, team_row in group_table.iterrows():
             team = team_row["Team"]
             points = team_row["Points"]
@@ -159,7 +251,11 @@ def update_group_stages(tournament_state, standings_df, matches_df):
 
             third_place_team = third_place_row["Team"]
 
-            status = third_place_status(standings_df, third_place_row)
+            status = third_place_status(
+                standings_df,
+                matches_df,
+                third_place_row
+            )
 
             if status == "qualified":
                 tournament_state[third_place_team]["stage"] = "Out of Group"
