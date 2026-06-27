@@ -55,64 +55,79 @@ def get_remaining_group_matches(group_name, matches_df):
     return remaining_matches
 
 
-def group_can_produce_better_third(
+def build_simulated_matches_df(remaining_matches, results):
+    rows = []
+
+    for match, result in zip(remaining_matches, results):
+        rows.append({
+            "home": match[0],
+            "away": match[1],
+            "home_score": result[0],
+            "away_score": result[1],
+            "round": 3
+        })
+
+    return pd.DataFrame(rows)
+
+
+def generate_result_combinations(number_of_matches):
+    if number_of_matches == 0:
+        return [[]]
+
+    smaller_combinations = generate_result_combinations(number_of_matches - 1)
+
+    combinations = []
+
+    for result in SIMULATED_RESULTS:
+        for smaller_combination in smaller_combinations:
+            combinations.append([result] + smaller_combination)
+
+    return combinations
+
+
+def group_third_place_relationship(
     group_name,
     matches_df,
     target_third_row
 ):
     remaining_matches = get_remaining_group_matches(group_name, matches_df)
 
-    if len(remaining_matches) == 0:
-        standings_df = build_group_tables(matches_df)
+    found_better = False
+    found_not_better = False
+
+    result_combinations = generate_result_combinations(len(remaining_matches))
+
+    for results in result_combinations:
+        simulated_matches = build_simulated_matches_df(
+            remaining_matches,
+            results
+        )
+
+        test_matches_df = pd.concat(
+            [matches_df, simulated_matches],
+            ignore_index=True
+        )
+
+        standings_df = build_group_tables(test_matches_df)
+
         group_table = standings_df[
             standings_df["Group"] == group_name
         ].reset_index(drop=True)
 
-        other_third = group_table.iloc[2]
-        return compare_teams(other_third, target_third_row)
+        simulated_third = group_table.iloc[2]
 
-    if len(remaining_matches) != 2:
-        return True
+        if compare_teams(simulated_third, target_third_row):
+            found_better = True
+        else:
+            found_not_better = True
 
-    match_1 = remaining_matches[0]
-    match_2 = remaining_matches[1]
+        if found_better and found_not_better:
+            return "possible"
 
-    for result_1 in SIMULATED_RESULTS:
-        for result_2 in SIMULATED_RESULTS:
-            simulated_matches = pd.DataFrame([
-                {
-                    "home": match_1[0],
-                    "away": match_1[1],
-                    "home_score": result_1[0],
-                    "away_score": result_1[1],
-                    "round": 3
-                },
-                {
-                    "home": match_2[0],
-                    "away": match_2[1],
-                    "home_score": result_2[0],
-                    "away_score": result_2[1],
-                    "round": 3
-                }
-            ])
+    if found_better:
+        return "guaranteed"
 
-            test_matches_df = pd.concat(
-                [matches_df, simulated_matches],
-                ignore_index=True
-            )
-
-            standings_df = build_group_tables(test_matches_df)
-
-            group_table = standings_df[
-                standings_df["Group"] == group_name
-            ].reset_index(drop=True)
-
-            simulated_third = group_table.iloc[2]
-
-            if compare_teams(simulated_third, target_third_row):
-                return True
-
-    return False
+    return "impossible"
 
 
 def third_place_status(standings_df, matches_df, third_place_row):
@@ -138,11 +153,16 @@ def third_place_status(standings_df, matches_df, third_place_row):
                 confirmed_better += 1
 
         else:
-            if group_can_produce_better_third(
+            relationship = group_third_place_relationship(
                 group_name,
                 matches_df,
                 third_place_row
-            ):
+            )
+
+            if relationship == "guaranteed":
+                confirmed_better += 1
+
+            elif relationship == "possible":
                 possible_better += 1
 
     if confirmed_better >= 8:

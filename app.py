@@ -127,3 +127,5 @@ st.markdown(
 🟥 **Eliminated**
 """
 )
+
+print(uruguay, status)
