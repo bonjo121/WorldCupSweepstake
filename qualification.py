@@ -218,9 +218,7 @@ def update_group_stages(tournament_state, standings_df, matches_df):
 
 
 def update_knockout_stages(tournament_state, matches_df):
-    games_played = {}
-
-    knockout_stage_by_game_number = {
+    stage_by_round = {
         4: "Won R32",
         5: "Won R16",
         6: "Won QF",
@@ -229,40 +227,29 @@ def update_knockout_stages(tournament_state, matches_df):
     }
 
     for _, match in matches_df.iterrows():
+        match_round = match["round"]
+
+        if match_round not in stage_by_round:
+            continue
+
         home = match["home"]
         away = match["away"]
 
         home_score = match["home_score"]
         away_score = match["away_score"]
 
-        games_played[home] = games_played.get(home, 0) + 1
-        games_played[away] = games_played.get(away, 0) + 1
-
         if home_score > away_score:
             winner = home
             loser = away
-
         elif away_score > home_score:
             winner = away
             loser = home
-
         else:
             continue
 
-        winner_game_number = games_played[winner]
-
-        if winner_game_number < 4:
-            continue
+        tournament_state[winner]["stage"] = stage_by_round[match_round]
+        tournament_state[winner]["alive"] = True
 
         tournament_state[loser]["alive"] = False
-
-        if not tournament_state[winner]["alive"]:
-            continue
-
-        tournament_state[winner]["stage"] = knockout_stage_by_game_number[
-            winner_game_number
-        ]
-
-        tournament_state[winner]["alive"] = True
 
     return tournament_state
