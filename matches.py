@@ -1,3 +1,5 @@
+from asyncio import events
+
 import requests
 import pandas as pd
 from requests.adapters import HTTPAdapter
@@ -52,3 +54,5 @@ def get_finished_matches():
             })
 
     return pd.DataFrame(matches)
+
+

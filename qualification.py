@@ -3,6 +3,11 @@ import pandas as pd
 from groups import groups
 from standings import build_group_tables
 
+PENALTY_WINNERS = {
+    ("Germany", "Paraguay"): "Paraguay",
+    ("Netherlands", "Morocco"): "Morocco",
+}
+
 
 SIMULATED_RESULTS = [
     (1, 0),
@@ -241,11 +246,23 @@ def update_knockout_stages(tournament_state, matches_df):
         if home_score > away_score:
             winner = home
             loser = away
+
         elif away_score > home_score:
             winner = away
             loser = home
+
         else:
-            continue
+            winner = PENALTY_WINNERS.get((home, away))
+
+            if winner is None:
+                winner = PENALTY_WINNERS.get((away, home))
+
+            if winner is None:
+                raise ValueError(
+                    f"Penalty winner not defined for {home} vs {away}"
+                )
+
+            loser = away if winner == home else home
 
         tournament_state[winner]["stage"] = stage_by_round[match_round]
         tournament_state[winner]["alive"] = True
